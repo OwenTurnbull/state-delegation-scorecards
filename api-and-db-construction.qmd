@@ -1,0 +1,570 @@
+---
+title: "API Calls and Database Construction"
+format: html
+editor: visual
+---
+
+## Initial library and API set-up
+
+Import libraries
+
+```{r, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE}
+library(tidyverse)
+library(DBI)
+library(RSQLite)
+library(httr)
+library(jsonlite)
+library(robotstxt)
+library(rvest)
+library(RSelenium)
+library(webdriver)
+library(xml2)
+```
+
+Store API Keys and Construct Base URLs
+
+```{r}
+#LegiScan API:
+legiscan_api_key <- read.table("/Users/owenturnbull/Documents/Personal Projects/API Keys/legiscan_api_key.txt")
+ls_base_url <- paste0("https://api.legiscan.com/?key=", legiscan_api_key[[1]])
+
+#Congress.gov API:
+congov_api_key <- read.table("/Users/owenturnbull/Documents/Personal Projects/API Keys/congress_gov_api_key.txt")[[1]]
+#congov_url_bills <- paste0("https://api.congress.gov/v3/bill?api_key=", congov_api_key[[1]])
+```
+
+Get Selenium Server Started
+
+```{r}
+#Start a local server
+selenium_server <- rsDriver(browser="firefox", port=as.integer(4444))
+# To close the server: selenium_server$server$stop
+# If I no longer have the selenium_server object: 
+    # Using terminal, type in this to check selenium servers connected to ports:
+      # ps aux | grep selenium
+      # kill the server using:
+      # % kill -9 <pid> -> REPLACE <pid> with the id; for example, owenturnbull      4270 -> replace <pid> w/ 4270
+
+#Assign the driver to object
+remDr <- selenium_server[["client"]]
+```
+
+Create base function for navigating and refreshing pages; refresh and sleep are needed to ensure data is collected for all pages if iterated over
+
+```{r}
+navigate_and_refresh <- function(url){
+  remDr$navigate(url)
+  remDr$executeScript("return document.readyState")  # This returns 'loading', 'interactive', or 'complete'
+
+  # Keep checking until the page's readyState is 'complete'
+  while (remDr$executeScript("return document.readyState") != "complete") {
+    Sys.sleep(0.15)  # Wait for 500ms before checking again
+  }
+  
+  #Have system pause b/w loads. Randomizes pause time to avoid detection
+  Sys.sleep(runif(1, min = 0.75, max = 1.5))
+}
+```
+
+# Creating Table 3 (House Member Data)
+
+First we will scrape representative names and ID's from congress.gov
+
+```{r}
+scrape_member_ids_by_page <- function(congress_num){
+    
+  navigate_and_refresh(paste0("https://www.congress.gov/members?q=%7B%22congress%22%3A%5B%22", congress_num, "%22%5D%7D&pageSize=250"))
+  
+  #Extract page text, find total # of pages
+  tot_pages <- remDr$getPageSource()[[1]] %>%
+    read_html() %>%
+    html_elements(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "pagination", " " ))]//*[contains(concat( " ", @class, " " ), concat( " ", "results-number", " " ))]') %>%
+    html_text() %>%
+    str_extract("(?<=of\\s)\\d+") %>%
+    .[1] %>% #keep just 1st result of character vect.
+    as.integer()
+  
+  #Now extract member information from each page
+  all_members.list = list()
+  for (x in 1:tot_pages) {
+    navigate_and_refresh(paste0("https://www.congress.gov/members?q=%7B%22congress%22%3A%5B%22", congress_num, "%22%5D%7D&pageSize=250&page=", x))
+    
+    #Pull the names and ID's from each page
+    names <- remDr$getPageSource()[[1]] %>%
+      read_html() %>%
+      html_elements(xpath = '//*[@id="main"]/ol/li//span/a') %>%
+      html_text %>%
+      unique()
+    
+    ids <- remDr$getPageSource()[[1]] %>%
+      read_html() %>%
+      html_elements(xpath = '//*[@id="main"]/ol/li//span/a') %>%
+      html_attr("href") %>%
+      str_extract("(?<=/)[A-Za-z0-9]+$") %>%
+      unique()
+    
+    #Combine profile data into tibble and filter out Senators
+    temp.tib <- tibble(`rep_id` = ids, `rep_name` = names) %>%
+      filter(str_detect(names, "Representative"))
+    
+    #Save the IDs to full list
+    all_members.list[[x]] <- temp.tib[["rep_id"]]
+  }
+    
+  #Combine each page's list of bioguide IDs
+  return(unlist(all_members.list))
+}
+
+scraped_bioguide_ids <- scrape_member_ids_by_page("117")
+```
+
+Then we will pull the relevant biographic information for each member from the congress.gov API
+
+CURRENTLY THE LAST LINES ARE COMMENTED OUT SO THAT THIS ISN'T ACCIDENTALLY RUN MULTIPLE TIMES AND THUS USE ALL MY PULLS
+
+```{r}
+#Create a function that takes in a member_id and pulls relevant biographic data from congress.gov API
+pull_member_data_api <- function(bioguideID){
+  #Pull member's data via congress.gov API
+  congapi_url <- paste0("https://api.congress.gov/v3/member/", bioguideID, "?&api_key=", congov_api_key)
+  api_request  <- GET(congapi_url) %>%
+    content(., as = "text", encoding = "UTF-8")
+
+  congapi_member_data <- fromJSON(api_request, flatten = TRUE)$member
+
+  #Pull out relevant fields
+  member_data <- list(
+    bioguideID,
+    member_name = congapi_member_data$directOrderName,
+    member_state = congapi_member_data$state,
+    member_district = congapi_member_data$district,
+    member_party = congapi_member_data$party[1, "partyAbbreviation"],
+    member_image_url = congapi_member_data$depiction$imageUrl,
+    member_website = congapi_member_data$officialWebsiteUrl
+  )
+
+  #Replace values with NA if null; otherwise they'd be dropped from the list
+  member_data <- sapply(member_data, function(x) ifelse(is.null(x), NA, x))
+
+  #return(member_data)
+  return(unlist(member_data))
+}
+
+# house_member_bios.df <- lapply(scraped_bioguide_ids, pull_member_data_api) %>%
+#   do.call(rbind, .) %>%
+#   as.data.frame()
+# 
+# colnames(house_member_bios.df) <- c("bioguide_id", "name", "state", "district", "party_affiliation", "image_url", "website")
+```
+
+# Creating Tables 1 & 2
+
+## Scrape House Bill Numbers
+
+Iterate through each page, grab each bill number, append to character vector (all bill numbers)
+
+```{r}
+#Set up initial vector for bill #'s
+congov_bill_nums <- c()
+#Iteratively pull all bill numbers for the session (STILL NEED TO FIGURE OUT HOW TO HAVE THIS APPLY TO 2nd SESSION TOO -- maybe it already does...?)
+#for (x in 1:congov_tot_pages) {
+for (x in 1:3) {
+  #Navigate to next page
+  navigate_and_refresh(paste0("https://www.congress.gov/search?pageSort=documentNumber%3Adesc&pageSize=250&q=%7B%22congress%22%3A%5B%22117%22%5D%2C%22chamber%22%3A%22House%22%2C%22type%22%3A%22bills%22%7D&page=", x))
+  #Re-fresh; necessary for xpaths to work each time
+  remDr$refresh()
+  Sys.sleep(1)
+  
+  #Get page data
+  temp_page_data <- remDr$getPageSource()[[1]]
+
+  #Pull the bill numbers
+  temp_bills <-  read_html(temp_page_data) %>%
+    html_elements(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "result-heading", " " ))]//a') %>%
+    html_text() %>%
+    str_unique() %>%
+    str_replace_all("\\.", "")
+  
+  #Append bill numbers to data.frame
+  congov_bill_nums <- append(congov_bill_nums, temp_bills)
+  
+  ##ADD LINE HERE FOR REMOVING THE DATA; I.E. Temp page data, etc. ABSOLUTE MUST!
+}
+
+scraped_bills.tib <- tibble(`bill_number` = congov_bill_nums)
+
+```
+
+Use Selenium to get necessary info from first page of congress.gov (count of pages and total bills)
+
+```{r}
+scrape_congov_page_count <- function(congress_num) {
+  
+  ##### First find the total number of pages of bill results #####
+  navigate_and_refresh(paste0("https://www.congress.gov/search?pageSort=documentNumber%3Adesc&pageSize=250&q=%7B%22congress%22%3A%5B%22", congress_num, "%22%5D%2C%22chamber%22%3A%22House%22%2C%22type%22%3A%22bills%22%7D&page=1"))
+  page1 <- remDr$getPageSource()[[1]]
+  
+  #Find the number of pages containing data
+  congov_tot_pages <- read_html(page1) %>%
+    html_elements(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "pagination", " " ))]//*[contains(concat( " ",        @class, " " ), concat( " ", "results-number", " " ))]') %>%
+    html_text() %>%
+    str_extract("\\d+") %>%
+    as.integer()
+  
+  return(congov_tot_pages) 
+}
+
+tot_bill_pages <- scrape_congov_page_count("117") %>%
+  seq(from = 1, to = ., by = 1) #turn count into a vect ranging from 1 to tot pages count
+```
+
+Then create a function for pulling the bill numbers, sponsors, and co-sponsor URLs from each page
+
+```{r}
+scrape_congov_bills_sponsors <- function(congress_num, page_num) {
+  navigate_and_refresh(paste0("https://www.congress.gov/search?pageSort=documentNumber%3Adesc&pageSize=250&q=%7B%22congress%22%3A%5B%22", congress_num, "%22%5D%2C%22chamber%22%3A%22House%22%2C%22type%22%3A%22bills%22%7D&page=", page_num))
+
+  #Get page data
+  temp_page_data <- remDr$getPageSource()[[1]]
+
+  #Pull the bill numbers
+  bill_number <-  read_html(temp_page_data) %>%
+    html_elements(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "result-heading", " " ))]//a') %>%
+    html_text() %>%
+    str_unique() %>%
+    str_replace_all("\\.", "")
+
+  #Pull the bill sponsor IDs and co-sponsor URLs
+  sponsor_ids_cosponsor_urls <- read_html(temp_page_data) %>%
+    html_elements(xpath = '//*[@id="main"]/ol/li/span[3]/a') %>%
+    html_attr("href")
+  
+  bioguide_id <- sponsor_ids_cosponsor_urls[seq(1, length(sponsor_ids_cosponsor_urls), by = 4)] %>%
+    str_extract(., "([A-Za-z]\\d+)$")
+  
+  cosponsors_url <- sponsor_ids_cosponsor_urls[seq(2, length(sponsor_ids_cosponsor_urls), by = 4)] %>%
+    paste0("https://www.congress.gov", .)
+  
+  #Extract the count of co-sponsors per bill
+  cosponsor_count <- read_html(temp_page_data) %>%
+    html_elements(xpath = '//*[@id="main"]/ol/li/span[3]/a') %>%
+    html_text() %>%
+    .[seq(2, length(.), by = 4)] %>%
+    as.numeric()
+  
+  #Create sponsor_status flag; will be "S" for all members in this table (since all are sponsors)
+  sponsor_status = "S"
+  
+  #Combine values to tibble and return
+  scraped_page_data.tib <- tibble(bill_number, bioguide_id, sponsor_status, cosponsor_count, cosponsors_url)
+  
+  return(scraped_page_data.tib)
+}
+#DELETE: 
+tot_bill_pages <- seq(from = 1, to = 38, by = 1)
+#Extract data from all pages, combine to dataframe
+scraped_bills_sponsors <- lapply(tot_bill_pages, function(page) scrape_congov_bills_sponsors("117", page)) %>%
+  do.call(rbind, .) %>%
+  as.data.frame()
+```
+
+Next create a function for going to each cosponsor URL and pulling the list of cosponsors
+
+```{r}
+#Function to extract all co-sponsor IDs from each URl
+scrape_cosponsors <- function(url) {
+  navigate_and_refresh(url)
+  Sys.sleep(runif(1, min = 0.5, max = 1.5)) #implement another random sleep period to avoid captcha
+  page_data <- remDr$getPageSource()[[1]]
+  
+  #Extract bill_number from the URL
+  bill_number <- str_extract(url, "/bill/[^/]+/[^/]+/(\\d+)") %>%
+    str_extract(., "\\d+$")
+  
+  #Extract the co-sponsor IDs from the page
+  cosponsor_ids <-  read_html(page_data) %>%
+    html_elements(xpath = '//*[@id="main"]/ol/li//a') %>%
+    html_attr("href") %>%
+    str_extract(., "([A-Za-z]\\d+)$")
+
+  #Create sponsor_status flag; will be "C" for all members in this table
+  sponsor_status = "C"
+  
+  #Tibble of extracted data
+  cosponsors.tib <- tibble(bill_number, cosponsor_ids, sponsor_status)
+  
+  return(cosponsors.tib)
+}
+
+cosponsor_urls.vect <- scraped_bills_sponsors %>%
+  select(cosponsors_url, cosponsor_count) %>%
+  filter(cosponsor_count > 0) %>%
+  .[["cosponsors_url"]]
+
+scraped_cosponsors <- lapply(cosponsor_urls.vect, scrape_cosponsors)
+```
+
+```{r}
+#url <- "https://www.congress.gov/bill/117th-congress/house-bill/8968/cosponsors?s=2&r=742&overview=closed#tabs"
+url <- "https://www.congress.gov/bill/117th-congress/house-bill/8969?s=2&r=741"
+navigate_and_refresh(url)
+page_data <- remDr$getPageSource()[[1]]
+
+bill_number <- str_extract(url, "/bill/[^/]+/[^/]+/(\\d+)") %>%
+  str_extract(., "\\d+$")
+
+cosponsor_ids <-  read_html(page_data) %>%
+  html_elements(xpath = '//*[@id="main"]/ol/li//a') %>%
+  html_attr("href") %>%
+  str_extract(., "([A-Za-z]\\d+)$")
+
+  #Create sponsor_status flag; will be "C" for all members in this table
+  sponsor_status = "C"
+  
+  #Tibble of extracted data
+  cosponsors.tib <- tibble(bill_number, cosponsor_ids, sponsor_status)
+```
+
+```{r}
+  navigate_and_refresh(paste0("https://www.congress.gov/search?pageSort=documentNumber%3Adesc&pageSize=250&q=%7B%22congress%22%3A%5B%22", 117, "%22%5D%2C%22chamber%22%3A%22House%22%2C%22type%22%3A%22bills%22%7D&page=",39))
+
+  #Get page data
+  temp_page_data <- remDr$getPageSource()[[1]]
+
+  #Pull the bill numbers
+  bill_number <-  read_html(temp_page_data) %>%
+    html_elements(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "result-heading", " " ))]//a') %>%
+    html_text() %>%
+    str_unique() %>%
+    str_replace_all("\\.", "")
+
+  #Pull the bill sponsor IDs and co-sponsor URLs
+  sponsor_ids_cosponsor_urls <- read_html(temp_page_data) %>%
+    html_elements(xpath = '//*[@id="main"]/ol/li/span[3]/a') %>%
+    html_attr("href")
+  
+  bioguide_id <- sponsor_ids_cosponsor_urls[seq(1, length(sponsor_ids_cosponsor_urls), by = 4)] %>%
+    str_extract(., "([A-Za-z]\\d+)$")
+  
+  cosponsors_url <- sponsor_ids_cosponsor_urls[seq(2, length(sponsor_ids_cosponsor_urls), by = 4)] %>%
+    paste0("https://www.congress.gov", .)
+  
+  #Pull the number of co-sponsors for the bill
+  cosponsor_count <- read_html(temp_page_data) %>%
+    html_elements(xpath = '//*[@id="main"]/ol/li/span[3]/a') %>%
+    html_text() %>%
+    .[seq(2, length(.), by = 4)] %>%
+    as.numeric()
+    
+  #Get bill description
+  bill_desc <-  read_html(temp_page_data) %>%
+    html_elements(xpath ='//*[@id="main"]/ol/li/span[2]') %>%
+    html_text() %>%
+    .[seq(1, length(.), by = 2)]
+  
+  #Get bill most recent status
+  bill_status <- read_html(temp_page_data) %>%
+    html_elements(xpath = '//*[@id="main"]/ol/li/span[7]/ol/li/div[@class="sol-step-info"]') %>%
+    html_text() %>%
+    str_replace_all(., "&gt;", ">") %>%
+    str_squish()
+  
+  
+  
+  #Create sponsor_status flag; will be "S" for all members in this table (since all are sponsors)
+  sponsor_status = "S"
+  
+  #Combine values to tibble and return
+  scraped_page_data.tib <- tibble(bill_number, bioguide_id, sponsor_status, cosponsors_url)
+```
+
+```{r}
+# bill_status_nodes <- read_html(temp_page_data) %>%
+#   html_elements(xpath = '//*[@id="main"]/ol/li/span[7]/ol/li/div[@class="sol-step-info"]')
+# 
+# 
+# external_action_codes <- bill_status_nodes %>%
+#   html_text() %>%  
+#   str_replace_all("&gt;", ">") %>%  # Clean HTML entities
+#   str_squish() %>%  # Remove extra whitespace
+#   str_split("\n") %>%  # Split by newlines
+#   map_chr(function(x) {
+#     str_extract(x[grepl("\\[externalActionCode\\]", x)], "(?<=\\[externalActionCode\\] => )\\d+")
+#   })
+# 
+# descriptions <- bill_status_nodes %>%
+#   html_text() %>%  
+#   str_replace_all("&gt;", ">") %>%  # Clean HTML entities
+#   str_squish() %>%  # Remove extra whitespace
+#   str_split("\n") %>%  # Split by newlines
+#   map_chr(function(x) {
+#     str_extract(x[grepl("\\[description\\]", x)], "(?<=\\[description\\] => ).*")
+#   })
+
+
+
+bill_status <-  read_html(temp_page_data) %>%
+  html_elements(xpath = '//*[@id="main"]/ol/li/span[6]/p[1]') %>%
+  html_text() %>%
+  .[seq(1, length(.), by = 2)]
+
+```
+
+## Scraping Roll Call Votes
+
+Create a function to generate URLs for all roll calls (from House Clerk website). Done by iterating over each page of the site's roll call search results, and then pulling each page's roll call ID's and respective years.
+
+```{r}
+generate_rollcall_urls <- function(congress_num, session){
+  
+  ##### First find the number of pages of search results for this session #####
+  #Nav. to search page for this session
+  navigate_and_refresh(paste0("https://clerk.house.gov/Votes?BillNum=H.R.&CongressNum=", congress_num, "&Session=", session, "&page=1"))
+  
+  #Extract page text, find total results
+  tot_rc_results <- remDr$getPageSource()[[1]] %>%
+    read_html() %>% 
+    html_elements(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "pagination_info", " " ))]') %>%
+    html_text() %>%
+    str_extract("(?<=of\\s)\\d+") %>%
+    .[1] %>% #keep just 1st result of character vect.
+    as.integer()
+
+  #Calculate total pages; 10 results shown per page
+  tot_rc_pages <- ceiling(tot_rc_results/10)
+
+  
+  ##### Then iteratively extract the rollcall ID from each page #####
+  all_rc_urls <- list()
+  for (x in 1:tot_rc_pages) {
+    #Navigate to the page
+    navigate_and_refresh(paste0("https://clerk.house.gov/Votes?BillNum=H.R.&CongressNum=", congress_num, "&Session=", session, "&page=", x))
+  
+    #Pull the page data, convert relevant text to HTML
+    temp_page_text <- remDr$getPageSource()[[1]] %>%
+      read_html() %>%
+      html_elements(xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "row-comment", " " ))] | //*[contains(concat( " ", @class, " " ), concat( " ", "heading", " " ))]//a[(((count(preceding-sibling::*) + 1) = 1) and parent::*)]') %>%
+      html_text()
+    
+    #Extract the rollcall_ids and years from the text
+    temp_rc_ids <- temp_page_text[seq(2, length(temp_page_text), by = 2)] %>% 
+      as.numeric()
+    temp_rc_years <- str_extract(temp_page_text[seq(1, length(temp_page_text), by = 2)], "\\d{4}")
+  
+    # Create the rc's URL and append to full list
+    all_rc_urls[[x]] <- paste0("https://clerk.house.gov/Votes/", temp_rc_years, temp_rc_ids)
+  }
+  
+  #Return final list of URLs for all roll calls
+  return(unlist(all_rc_urls))
+}
+```
+
+Now go through each ID and year combination to pull the vote history for that roll-call vote
+
+```{r}
+scrape_rollcall_ids_votes <- function(url) {
+  
+  navigate_and_refresh(url)
+  
+  #Grab the relevant roll-call ID from the URL:
+  rollcall_id <- str_extract(url, "20\\d\\d[0-9]+$")
+
+  #Pull and convert to HTML
+  temp_rc_vote_html <- remDr$getPageSource()[[1]] %>%
+    read_html()
+
+  ##### Table 1 Extraction (Roll Call Votes by Member) #####
+  #Extract the table nodes
+  temp_rc_table_rows <- html_nodes(temp_rc_vote_html, xpath = '/html/body/div[2]/div/div/div/section/div[3]/div[3]/div[2]            /table/tbody') %>%
+    html_nodes("tr")
+
+  #Extract the bioguide_ids and votes from the table
+  ids <- html_nodes(temp_rc_table_rows, "td:nth-child(1) a") %>%
+    xml_attr("href") %>%
+    gsub("/Members/", "", .) %>%
+    gsub("http://bioguide.congress.gov/scripts/biodisplay.pl\\?index=", "", .)
+  
+  votes <- html_text(html_nodes(temp_rc_table_rows, "td:nth-child(6)"))
+  
+  #Create the initial tibble for Table 1
+  table1_data <- tibble(`rollcall_id`=rollcall_id, `bioguide_id` = ids, `vote`=votes) %>%
+    mutate(across(-rollcall_id, ~ recode(.x, "Yea" = "Y", "Nay" = "N", "Not #Voting" = "NV", "Present" = "P")))
+  
+  ##### Table 2 Extraction (Roll Call Metadata) #####
+  #Extract the bill number
+  bill_number <- html_nodes(temp_rc_vote_html, xpath = '/html/body/div[2]/div/div/div/section/div[1]/h1/span/a') %>%
+    xml_attr("aria-label") %>%
+    str_extract("(?<=bill number, )\\S+")
+    
+  #Extract the "Vote Question" value (i.e., what type of vote this rc is for)
+  vote_question <- html_nodes(temp_rc_vote_html, xpath = '//*[contains(concat( " ", @class, " " ), concat( " ", "roll-call-first-row", " " ))]') %>%
+    html_text() %>%
+    str_extract("(?<=Vote Question\\: )\\D+")
+  
+  #Create the initial tibble for Table 2
+  table2_data <- tibble(`rollcall_id` = rollcall_id, `bill_number` = bill_number, `vote_question` = vote_question)
+  
+  return(list(table1 = table1_data, table2 = table2_data))
+}
+```
+
+Create the overall function for scraping and storing the roll-call data for tables 1 and 2
+
+```{r}
+create_rollcall_tables <- function(congress_num){
+  #First call function for generating each roll-call's vote page URL
+  session1_urls <- generate_rollcall_urls(congress_num, "1st")
+  navigate_and_refresh("https://www.google.com/") #to prevent detection 
+  session2_urls <- generate_rollcall_urls(congress_num, "2nd")
+  
+  #Store all generated URLs into one vector
+  all_rc_urls.vect <- c(session1_urls, session2_urls)
+  
+  #Then call function for scraping roll-call votes from those URLs; this creates tables 1 and 2
+  rollcall_tables.list <- lapply(all_rc_urls.vect, scrape_rollcall_ids_votes)
+
+  #Combine the sublists to get each table
+  table1_combined <- bind_rows(lapply(rollcall_tables.list, `[[`, 1))
+  table2_combined <- bind_rows(lapply(rollcall_tables.list, `[[`, 2))
+
+  return(list(table1_combined, table2_combined))
+}
+
+rollcall_tables <- create_rollcall_tables("117")
+```
+
+Add the tables to a local DB \[this will be reformatted later, for now just need to ensure it works and also get backup so I don't need to re-scrape) This will GO AFTER the following chunk that attaches the state abbrvs to certain members to pull in the bioguide ids
+
+```{r}
+db_con <- dbConnect(SQLite(), "state-delegation-scorecards.db")
+dbWriteTable(db_con, "rollcall_votes.tbl", as.data.frame(rollcall_tables[[1]]), overwrite = TRUE)
+dbWriteTable(db_con, "rollcall_info.tbl", as.data.frame(rollcall_tables[[2]]), overwrite = TRUE)
+
+#Table is not finalized yet, but putting to DB so I can fix later
+dbWriteTable(db_con, "bill_sponsors.tbl", scraped_bills_sponsors, overwrite = TRUE)
+
+dbWriteTable(db_con, "house_member_bios.tbl", table3.df, overwrite=TRUE)
+#ONCE I RE-RUN the member buio extraction script, delete the above line then uncomment and run the below line. I just changed the name of the table (used to be table3.df, now house_member_bios.df)
+#dbWriteTable(db_con, "house_member_bios.tbl", house_member_bios.df, overwrite=TRUE)
+
+dbDisconnect(db_con)
+```
+
+# 
+
+# Creating Table 4 (Sponsors/Co-Sponsors)
+
+Then we will pull the relevant sponsor and cosponsor data
+
+```{r}
+#test_ids <- c("A000370", "B001307", "P000048")
+
+congapi_url <- paste0("https://api.congress.gov/v3/member/", "B001307", "/sponsored-legislation?api_key=", congov_api_key)
+api_request  <- GET(congapi_url) %>%
+  content(., as = "text", encoding = "UTF-8")
+  
+congapi_sponsor_data <- fromJSON(api_request, flatten = TRUE)$member
+
+  #congapi_member_data <- fromJSON(api_request, flatten = TRUE)$member
+```

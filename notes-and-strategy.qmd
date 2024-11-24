@@ -1,0 +1,178 @@
+---
+title: "State Delegation Scorecards"
+author: "Owen Turnbull"
+format: html
+editor: visual
+---
+
+## Overall Goal:
+
+Create an interactive map of the US that shows a "scorecard" of each state's delegation to the house of representatives. The main component of this scorecard will be the state's "relative influence"; this is defined as the number of bills passed by house members from that state (weighted by the total number of house members from that state). The other data points will give context to that state's success, thus allowing us to see why certain states have more relative influence than others. Additional data points in the scorecard include:
+
+1.  The names and party affiliation of each member from that state
+2.  The number of bills introduced by members
+3.  The number of bills passed by members
+4.  The "unity" (or maybe "cohesion") of the state's delegation; defined as the percent of bills introduced by one member that are co-sponsored by *x* amount of other members.
+5.  . . . .
+
+## Impediments:
+
+-   Will need to consider how to deal with external forces for "party influence"; i.e., the party in charge will greatly affect what bills are passed more-so than "party unity" or anything else.
+
+    -   Solutions:
+
+        -   We do this analysis on two sets of congress: one where Dems lead, and one where Republicans led. Will be easy since we had this the past 2 cycles (Pelosi then Johnson)
+        -   We calculate two different "influence" scores – one for the state when dems control house, one for when republicans control house. The map would
+        -   We have the map display both current and historical records. The current record shows unity, influence, etc. The historical record then breaks "influence" into two categories: influence when the party in power aligns with the majority of the delegates from the state, and another where it doesn't.
+        -   Similar to the above point, we could calculate influence based on number of reps that share party with the ruling party (i.e., if R's control house, then influence is \# of bills passed by R's from that delegation, weighted by number of R's relative to other states) -\> this has substance and worth using, but not as primary indicator since it's too open to errors and special coding cases
+
+-   Special cases to keep an eye for:
+
+-   Will need to figure out what universe of bills I actually want to keep. All bills or just those that made it out of committees?
+
+    -   For Table 3 (list of all bills), keep all bills that were introduced, even if they didn't make it out of committee. For Table 1 (roll calls), only keep the roll call votes for bills that made it out of committee
+
+        -   This way we have all bills introduced (thus 'most active' and % of introduced bills that were passed) via Table1. Table1 doesn't need the bills not out of committee bc that's irrelevant; we only need the #passed and #introduced.
+
+    -   In line with above, may also want to make a variable called approved_by_committee (or something similar); would add 1 more data point, if we calc'd each state delegations % of bills that died via committee (just an interesting data point to add)
+
+        -   Though I'd have to do some research on just how these bills are coded—i.e., if they go through multiple committees, how do I know whether it "passed" under the committees? There may be code for this via the API already, but should look into.
+
+## Strategy:
+
+Currently:
+
+-   Just finished creating the base version of the RShiny app; it works and shows the representatives for each US state
+
+-   Next steps:
+
+    -   Scrape the sponsor/cosponsor data
+
+    -   Scrape the bill history data (unless I can find way to not use it, which may be possible)
+
+    -   **Figure out why VT shows "No members found"!!**
+
+    -   Then I will need to write the other queries that I'll need to use for the shiny app
+
+        -   i.e., need the following tables created:
+
+            -   \# of bills introduced by each member
+
+            -   \# of bills passed by each member (i.e., passed out of house)
+
+            -   \% of bills passed by each member (using above 2 counts)
+
+                -   the above 3 can all be folded into one query w/ joins, or pull them each then combine them; will make it easier to pull these values into the shiny logic since I already have that working
+
+            -   Then need a table for statewide statistics
+
+                -   The unity score, yada, yada
+
+                -   \# of bills introduced by the state
+
+                -   \# of bills passed by the state
+
+                    -   Should store these all in it's own df, then will need to copy the logic used in the current shiny app so that I can pull these in too
+
+    -   Once all of that's done:
+
+        -   Figure out how to put this in a presentation format
+
+    -   Once that's finalized (i.e., I can reasonably present it to class), I can do the following to ensure the project is clean and ready for github:
+
+        -   disaggregate the extraction/scraping script into separate files
+
+        -   clean up shiny script so it reads more easily
+
+        -   figrue out how to change the header dynamically in shiny so that it says "State House Delegation Scorecards - 117th Congress" (but dynamically changing "117th")
+
+1.  Determine what year data I want; the congress prior to current, since that session is completed?
+    1.  [***USE 117th Congress Data (2021-2022)***]{.underline}
+2.  Pull the data
+3.  Clean the data as needed
+4.  Store the data in a SQL DB (since there will be *a lot*); better to do it this way then run the API every single time and run out of API requests
+5.  Comment out the API call functions (initially, so that I don't run it every time by accident)
+6.  Being creating the visualization.....
+
+## Data Sources:
+
+-   For information on members of congress (states, biographies, etc.) use the congress.gov api
+
+-   For information on roll-call votes (who voted yes/no), use the LegiScan API
+
+    -   LegiScan has data dictionary in the user manual, will be useful for ensuring I collect the right bills
+    -   Also can scrape from: <https://clerk.house.gov/Votes?CongressNum=117&Session=1st>
+
+-   For info on sponsored/co-sponsored bills, use congress.gov api
+
+## SQL Structure Plan:
+
+-   Table 1: Roll call history
+
+    -   Rows: Bills introduced; PK: Bill ID number
+
+    -   Columns: house members; named as their ID number
+
+-   Table 2: Member Information
+
+    -   Rows: Each member; PK: Member ID number
+
+    -   Columns: biographic information; name, state, party, etc.
+
+-   Table 3: Bill history & sponsors
+
+    -   Rows: Bills introduced; PK: Bill ID number
+
+    -   Columns: other information on the bills; whether it passed the house, the sponsor (FK: member ID #), Co-sponsors (FK: member-ID #)
+
+## Table Construction:
+
+### Table 1:
+
+-   Need all bills introduced by the house for the session -\> Done already, taken from congress.gov site
+
+-   Need roll call history for each bill that made it to the final vote -\> Need to scrape from clerk site
+
+-   Then combine above two, so I have a table of all bills and how each member voted
+
+## Other Thoughts:
+
+-   Should restructure and rename the ls_base_url fields once I have that established; I made this thinking I would have multiple diff API pulls from LegiScan, but realizing I won't; just multiple from congress.gov API. So should rename and restructure to make more sense (once I build the loop for pulling these)
+
+-   If getting the bill id's from LegiScan is too hard (i.e., I can't easily connect the scraped congress.gov data's bill numbers to LegiScan to get the bill_ids), then it's *not the end of the world;* I'm allowed to **use a bulk data import** .csv, i only need 1 scrape/api call. So For any of these things, if it's too difficult to automate it completely, just find a .csv and use it.
+
+-   Would be cool if I could make this a 'function' where users can specify the type of congressional year that they want, so they can see historical data too.....? Would have to think more about this
+
+    -   This is definitely possible. See next note
+
+-   May want to break up the data scraping and database constructor into separate scripts. Then all of the scrapers would operate as functions. And then we could just call the functions separately when it comes time to create the databases. The functions would allow users to enter congress numbers (and maybe other things) when they run the scrapers. Then we can have these used to generate the databases. So basically allows us to run it on one congress at a time (starting w/ 117) to update the database with more and more years of data. This would be cool for a future-forward mindset where we know we'll want to update the tables with 118th, 119th, etc. data
+
+-   Once I begin the SQL part, I should figure out how to create the tables first, and then have the scraping functions inject each observation into the SQL db one at a time; would mean I don't have to iteratively append to my lists, and therefore save tons and tons of time. Would also look way cleaner.
+
+-   Somewhat in line with above point:
+
+    -   Need to figure out what exact roll calls I want to include in my vote tables. Right now It's pulling all house bills and resolutions. This doesn't pull house joint resolutions, sjres, etc. These are first pulled when scraping every page of the clerk site (the filters are already applied). Then the data is pulled for each of those
+
+    -   Means I have roll call data for all house bills **and** resolutions. So either:
+
+        -   When making the graphs, etc., need to make sure to filter out house resolutions; could then expand my search (just change filters used in the URL) to everything, which would make my roll call metadata and roll call votes tables more robust (but may make scraping take longer – apply the filter and see how many more rollcalls/bills would have to be scraped if I wanted all of the RC votes (not just house bills and resolutions)
+
+        -   Or, I can have the iteration drop any house resolutions too, so I only keep house bills (i.e., those starting with HR")
+
+            -   To do, would go into the script pulling metadata and votes and use filter(str_detect(...)) to filter out resolutions.
+
+            -   This wouldn't save any time since we'd still iterate and pull before moving on. If we wanted this to save time we'd have to rethink how we're pulling the first list (the roll call ids from each page that we eventually iterate over). Reconstructing that is good idea long term but would take too much time short term. So keep in mind, but get rest of project working first
+
+-   According to the professor, our Git repo should have evrything, but the canvas submission should only be our report/analysis portion; i.e., I can have the scraping and database creation in one script, and then analysis in a second script. That 2nd script would be the canvas submission.
+
+-   Need to reconsider the "intermediate" house member table – i.e., the table of just IDs and names. Dont really need this table long term since I can pull it all in the subsequent scraping (the scraping based off that table). So this won't go into SQL. Don't really need the name either, since I'm also getting that.
+
+-   Need to document somewhere how the rollcall_ids are defined. I.e., the first letters are the roll call number and the second letter (after the "\_") is the session
+
+## Possible Improvements:
+
+-   Figure out how to have the 1st (most recent) roll-call ID auto-populate; rn it's not being captured, I'm generating it semi-manually
+-   Should turn current extract/database creation script into hard .R file. And then maybe nest these a bit (think about future):
+    -   Put each of the extraction/scraping functions into their own .R file
+    -   Create a new umbrella .R file that calls the other scripts, will make it easier if I need to run them in the future for updates, etc.
+    -   For example, umbrella .R file let's us define congress_num at the macro level, then calls each of the necessary functions using that congress_num. Will make it easier to decide which functions we want to/need to run and call those specifically. Will look and operate much cleaner, in short.

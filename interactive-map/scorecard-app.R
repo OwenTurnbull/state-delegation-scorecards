@@ -10,6 +10,7 @@ library(tigris)
 library(DBI)
 library(usmap)
 library(htmltools)
+library(stringr)
 
 # Database setup and query to get representative data
 con <- dbConnect(SQLite(), "state-delegation-scorecards.db")
@@ -104,8 +105,8 @@ server <- function(input, output, session) {
     state_labels <- paste(
       "<strong>", us_states_geojson$NAME,
       "</strong><br>Bills per Member:", us_states_geojson$weighted_bills,
-      "</strong><br>Total Bills Introduced:", us_states_geojson$tot_bills,
-      "</strong><br>Total Members:", us_states_geojson$tot_members) %>%
+      "<br>Total Bills Introduced:", us_states_geojson$tot_bills,
+      "<br>Total Members:", us_states_geojson$tot_members) %>%
       lapply(htmltools::HTML)
     
     # Generate the map
@@ -144,19 +145,17 @@ server <- function(input, output, session) {
     
     # Generate HTML content as a string
     if (nrow(members_in_state) == 0) {
-      content <- paste0("<h4>State: ", state_name, "</h4><br>No members found for this state.")
+      content <- paste0("<h4>State: ", str_to_title(state_name), "</h4><br>No members found for this state.")
     } 
     else {
       members_list <- paste0(
-        "<h4>State: ", state_name, "</h4><br><b>Members of Congress:</b><ul>",
+        "<h4>", str_to_title(state_name), "</h4><h5>House Members:</h5>",
         paste0(
           lapply(1:nrow(members_in_state), function(i) {
-            paste0("<li>", members_in_state$display_name[i], " (", members_in_state$party_affiliation[i], ", District ", members_in_state$district[i], ")</li>")
-          }),
-          collapse = ""
-        ),
-        "</ul>"
-      )
+            paste0("<br><b>", members_in_state$display_name[i], "</b> (", members_in_state$party_affiliation[i], ")",
+              "<br>District: ", members_in_state$district[i], 
+              "<br>Bills Sponsored: ", members_in_state$tot_sponsored[i], "<br>")
+            }), collapse = ""))
       content <- paste0("<div class='popup-content'>", members_list, "</div>")
     }
     
@@ -164,9 +163,9 @@ server <- function(input, output, session) {
     leafletProxy("us_map") %>%
       clearPopups() %>%
       addPopups(
-        lng = input$us_map_shape_click$lng,  # Longitude of clicked point
-        lat = input$us_map_shape_click$lat,  # Latitude of clicked point
-        popup = content,  # Pass the HTML string content
+        lng = input$us_map_shape_click$lng,
+        lat = input$us_map_shape_click$lat,
+        popup = content,  # Pass the HTML content
         layerId = state_name,  # Use state name as the layerId to uniquely identify the popup
         options = popupOptions(maxWidth = 400)
       )

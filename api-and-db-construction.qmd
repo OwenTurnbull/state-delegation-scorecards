@@ -260,7 +260,7 @@ scrape_congov_bills_sponsors <- function(congress_num, page_num) {
   
   return(scraped_page_data.tib)
 }
-#DELETE: 
+#DELETE -- FOR TESTING: 
 tot_bill_pages <- seq(from = 1, to = 38, by = 1)
 #Extract data from all pages, combine to dataframe
 scraped_bills_sponsors <- lapply(tot_bill_pages, function(page) scrape_congov_bills_sponsors("117", page)) %>%
@@ -304,26 +304,9 @@ cosponsor_urls.vect <- scraped_bills_sponsors %>%
 scraped_cosponsors <- lapply(cosponsor_urls.vect, scrape_cosponsors)
 ```
 
-```{r}
-#url <- "https://www.congress.gov/bill/117th-congress/house-bill/8968/cosponsors?s=2&r=742&overview=closed#tabs"
-url <- "https://www.congress.gov/bill/117th-congress/house-bill/8969?s=2&r=741"
-navigate_and_refresh(url)
-page_data <- remDr$getPageSource()[[1]]
+Below is for testing out other values we can pull from the bill overiew pages. bill_number and cosponsor count have already been included in the function, however, bill_desc and bill_status have not been; these would be very helpful to have, particularly bill_status. Keep attempting to pull this out. It mostly works, but it doesn't pull all of them, so need to find a way to figure out which ones it's pulling and then i can connect it back to the list of bills
 
-bill_number <- str_extract(url, "/bill/[^/]+/[^/]+/(\\d+)") %>%
-  str_extract(., "\\d+$")
-
-cosponsor_ids <-  read_html(page_data) %>%
-  html_elements(xpath = '//*[@id="main"]/ol/li//a') %>%
-  html_attr("href") %>%
-  str_extract(., "([A-Za-z]\\d+)$")
-
-  #Create sponsor_status flag; will be "C" for all members in this table
-  sponsor_status = "C"
-  
-  #Tibble of extracted data
-  cosponsors.tib <- tibble(bill_number, cosponsor_ids, sponsor_status)
-```
+Possible solution would be to figure out how to pull these values at the specici html attribute, and then iteratively pull them, so that each of the fields are connected perfectly and we don't have to worry about mismatches
 
 ```{r}
   navigate_and_refresh(paste0("https://www.congress.gov/search?pageSort=documentNumber%3Adesc&pageSize=250&q=%7B%22congress%22%3A%5B%22", 117, "%22%5D%2C%22chamber%22%3A%22House%22%2C%22type%22%3A%22bills%22%7D&page=",39))

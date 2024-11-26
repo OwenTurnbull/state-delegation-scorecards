@@ -42,57 +42,27 @@ Create an interactive map of the US that shows a "scorecard" of each state's del
 
 Currently:
 
--   Just finished creating the base version of the RShiny app; it works and shows the representatives for each US state
+-   I got the shiny app working, now just need to add in whatever else I want
 
--   Next steps:
+-   Next steps are:
 
-    -   Scrape the sponsor/cosponsor data
+    -   Get the results formatted correctly for class presentations
 
-    -   Scrape the bill history data (unless I can find way to not use it, which may be possible)
+        -   Do this first so that I am not pressed for time
 
-    -   **Figure out why VT shows "No members found"!!**
+-   Then:
 
-    -   Then I will need to write the other queries that I'll need to use for the shiny app
+    -   Figure out why VT shows "no members found"
 
-        -   i.e., need the following tables created:
+    -   Get the bill_status field to pull correctly, so that I can add this data (success, etc.) into the graph
 
-            -   \# of bills introduced by each member
+-   Finally:
 
-            -   \# of bills passed by each member (i.e., passed out of house)
+    -   The above steps will finalize the project for class, except for restructuring it so that it's ready for submission. Now tht that's all finalized I should:
 
-            -   \% of bills passed by each member (using above 2 counts)
+        -   Restructure the shiny app script so that there's 1 script that queries the data and builds the inbound dataframes, and then 1 app that actually builds the app (or, if preferred, I can do 4 scripts: 1 that builds the frames, 1 for constructing UI, 1 for constructing server, and then 1 umbrella that runs the previous 3. This is similar to the structure I saw on a github project.
 
-                -   the above 3 can all be folded into one query w/ joins, or pull them each then combine them; will make it easier to pull these values into the shiny logic since I already have that working
-
-            -   Then need a table for statewide statistics
-
-                -   The unity score, yada, yada
-
-                -   \# of bills introduced by the state
-
-                -   \# of bills passed by the state
-
-                    -   Should store these all in it's own df, then will need to copy the logic used in the current shiny app so that I can pull these in too
-
-    -   Once all of that's done:
-
-        -   Figure out how to put this in a presentation format
-
-    -   Once that's finalized (i.e., I can reasonably present it to class), I can do the following to ensure the project is clean and ready for github:
-
-        -   disaggregate the extraction/scraping script into separate files
-
-        -   clean up shiny script so it reads more easily
-
-        -   figrue out how to change the header dynamically in shiny so that it says "State House Delegation Scorecards - 117th Congress" (but dynamically changing "117th")
-
-1.  Determine what year data I want; the congress prior to current, since that session is completed?
-    1.  [***USE 117th Congress Data (2021-2022)***]{.underline}
-2.  Pull the data
-3.  Clean the data as needed
-4.  Store the data in a SQL DB (since there will be *a lot*); better to do it this way then run the API every single time and run out of API requests
-5.  Comment out the API call functions (initially, so that I don't run it every time by accident)
-6.  Being creating the visualization.....
+        -   Disaggregate the extraction/scraping scripts into separate .R files
 
 ## Data Sources:
 
@@ -104,36 +74,6 @@ Currently:
     -   Also can scrape from: <https://clerk.house.gov/Votes?CongressNum=117&Session=1st>
 
 -   For info on sponsored/co-sponsored bills, use congress.gov api
-
-## SQL Structure Plan:
-
--   Table 1: Roll call history
-
-    -   Rows: Bills introduced; PK: Bill ID number
-
-    -   Columns: house members; named as their ID number
-
--   Table 2: Member Information
-
-    -   Rows: Each member; PK: Member ID number
-
-    -   Columns: biographic information; name, state, party, etc.
-
--   Table 3: Bill history & sponsors
-
-    -   Rows: Bills introduced; PK: Bill ID number
-
-    -   Columns: other information on the bills; whether it passed the house, the sponsor (FK: member ID #), Co-sponsors (FK: member-ID #)
-
-## Table Construction:
-
-### Table 1:
-
--   Need all bills introduced by the house for the session -\> Done already, taken from congress.gov site
-
--   Need roll call history for each bill that made it to the final vote -\> Need to scrape from clerk site
-
--   Then combine above two, so I have a table of all bills and how each member voted
 
 ## Other Thoughts:
 

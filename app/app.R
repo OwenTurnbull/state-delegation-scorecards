@@ -40,6 +40,8 @@ bill_sponsors <- dbGetQuery(con, sponsors_query) %>%
 members_data <- left_join(member_bios, bill_sponsors, by = join_by(bioguide_id))
 members_data$state <- toupper(trimws(members_data$state))
 
+dbDisconnect(con)
+
 ################################################################################
 # Additional fields and other transformations
 ################################################################################
@@ -75,7 +77,7 @@ library(dplyr)
 
 # Define UI
 ui <- fluidPage(
-  titlePanel("US House of Representatives Members"),
+  titlePanel("State Scorecards for the 117th House of Representatives"),
   
   # Add custom CSS for scroll-able popups
   tags$head(

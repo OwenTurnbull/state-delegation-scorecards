@@ -5,6 +5,12 @@ format: pdf
 editor: visual
 ---
 
+## GitHub and Shiny App URLS:
+
+GitHub: <https://github.com/OwenTurnbull/state-delegation-scorecards>
+
+Shiny App: <https://owenturnbull.shinyapps.io/state-delegation-scorecards/>
+
 ## Preface
 
 This report is meant exclusively for analysis; while it can be rendered, it will not create the Shiny app on its own. This is because the process of scraping the data and creating the subsequent Shiny app takes around 1.5 hours to run in full. The submission instructions say that this report should be render-able in full; however, given the 1.5 hour run time, I felt that this may not be practical. Instructions for running this app can instead be found in the README.md document. That document will provide instructions for running the scraping code and creating the Shiny app. The process is simple, but too time-intensive to include here.

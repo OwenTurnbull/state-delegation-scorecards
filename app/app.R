@@ -180,4 +180,4 @@ server <- function(input, output, session) {
 shinyApp(ui = ui, server = server)
 
 ##### Keeping here for reference: how to deploy app to shiny.io
-#deployApp(appDir = here("app"), appName = "house-delegation-scorecards")
+#deployApp(appDir = here("app"), appName = "state-delegation-scorecards")
